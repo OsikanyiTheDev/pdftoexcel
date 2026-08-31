@@ -25,11 +25,21 @@ export default function Dropzone() {
         headers: { Authorization: `Bearer ${session.access_token}` },
         body: fd,
       });
-      const body = await res.json();
-      if (res.status === 409 || body.status === "DUPLICATE")
+      const raw = await res.text();
+      let body: any = null;
+      try { body = JSON.parse(raw); } catch { /* non-JSON (HTML error page) */ }
+      if (res.status === 409 || body?.status === "DUPLICATE")
         set({ status: "dup", msg: body.message ?? "Already imported", id: body.statement_id });
-      else if (!res.ok)
-        set({ status: "error", msg: body.detail ?? `HTTP ${res.status}` });
+      else if (!res.ok) {
+        let msg = body?.detail ?? `HTTP ${res.status}`;
+        if (!body) {
+          if (res.status === 404)
+            msg = "API function not found (404) — the Python function did not deploy. Check Vercel → Deployments → Building logs for a pip/Python error, then paste it in chat.";
+          else
+            msg = `API returned HTTP ${res.status} (non-JSON). First line: ${raw.slice(0, 120)}`;
+        }
+        set({ status: "error", msg });
+      }
       else if (body.warnings?.length)
         set({ status: "warn", msg: `Imported ${body.rows} rows · ${body.warnings.length} warning(s)`, id: body.statement_id });
       else
