@@ -1,0 +1,4 @@
+pymupdf==1.28.2
+fastapi==0.115.12
+python-multipart==0.0.20
+openpyxl==3.1.5
