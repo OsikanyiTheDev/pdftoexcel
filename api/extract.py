@@ -8,7 +8,14 @@ function still boots and returns a JSON diagnostic instead of an HTML crash page
 """
 import json
 import os
+import sys
 import traceback
+
+# make local-package imports work regardless of how Vercel lays out the bundle
+_HERE = os.path.dirname(os.path.abspath(__file__))
+for _p in (_HERE, os.path.dirname(_HERE)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
