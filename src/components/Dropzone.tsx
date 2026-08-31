@@ -32,6 +32,8 @@ export default function Dropzone() {
         set({ status: "dup", msg: body.message ?? "Already imported", id: body.statement_id });
       else if (!res.ok) {
         let msg = body?.detail ?? `HTTP ${res.status}`;
+        if (Array.isArray(body?.error) && body.error.length)
+          msg += " :: " + body.error.slice(-3).join(" ").replace(/\s+/g, " ");
         if (!body) {
           if (res.status === 404)
             msg = "API function not found (404) — the Python function did not deploy. Check Vercel → Deployments → Building logs for a pip/Python error, then paste it in chat.";

@@ -2,6 +2,7 @@
 import hashlib
 import re
 from datetime import datetime
+from urllib.parse import quote
 
 from . import xlsx
 
@@ -40,8 +41,9 @@ def persist(sb, org_id, user_id, pdf_bytes, filename, extracted):
     file_sha = hashlib.sha256(pdf_bytes).hexdigest()
     dedupe_key = f"{acct_no}|{period_start}|{period_end}|{file_sha[:16]}"
 
-    # 1) duplicate import check
-    existing = sb.select("statements", f"select=id,original_filename&dedupe_key=eq.{dedupe_key}&limit=1")
+    # 1) duplicate import check (quote: key contains "|" which must be encoded)
+    existing = sb.select("statements",
+                         f"select=id,original_filename&dedupe_key=eq.{quote(dedupe_key, safe='')}&limit=1")
     if existing:
         return {"status": "DUPLICATE", "statement_id": existing[0]["id"],
                 "message": f"Already imported as '{existing[0].get('original_filename')}'."}
@@ -54,9 +56,13 @@ def persist(sb, org_id, user_id, pdf_bytes, filename, extracted):
     }], upsert=True)
     account_id = acc_rows[0]["id"] if acc_rows else None
 
-    # 3) store original pdf
-    pdf_path = f"{org_id}/{file_sha}_{re.sub(r'[^A-Za-z0-9._-]+', '_', filename)}"
-    sb.storage_upload("statements", pdf_path, pdf_bytes, "application/pdf")
+    # 3) store original pdf (non-fatal: DB import must not depend on storage)
+    pdf_path = None
+    try:
+        pdf_path = f"{org_id}/{file_sha}_{re.sub(r'[^A-Za-z0-9._-]+', '_', filename)}"
+        sb.storage_upload("statements", pdf_path, pdf_bytes, "application/pdf")
+    except Exception:
+        pdf_path = None
 
     # 4) statement row
     warnings = extracted["issues"]
@@ -95,11 +101,13 @@ def persist(sb, org_id, user_id, pdf_bytes, filename, extracted):
     for i in range(0, len(rows), 500):
         sb.insert("transactions", rows[i:i + 500], returning="return=minimal")
 
-    # 6) xlsx export -> storage
-    xls = xlsx.build_xlsx(payload)
-    xlsx_path = f"{org_id}/{statement_id}.xlsx"
-    sb.storage_upload("exports", xlsx_path, xls,
-                      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    # 6) xlsx export -> storage (non-fatal; Excel is also built on-demand at download time)
+    try:
+        xls = xlsx.build_xlsx(payload)
+        sb.storage_upload("exports", f"{org_id}/{statement_id}.xlsx", xls,
+                          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    except Exception:
+        pass
 
     # 7) extraction log
     sb.insert("extraction_logs", [{
@@ -108,6 +116,8 @@ def persist(sb, org_id, user_id, pdf_bytes, filename, extracted):
         "stats": extracted["stats"],
     }], returning="return=minimal")
 
+    if pdf_path is None:
+        warnings = warnings + ["original PDF could not be stored (storage error) - statement data saved fine"]
     return {"status": "OK", "statement_id": statement_id, "account_id": account_id,
             "rows": len(tx), "warnings": warnings,
             "summary": {"bank": bank, "account_number": acct_no,
