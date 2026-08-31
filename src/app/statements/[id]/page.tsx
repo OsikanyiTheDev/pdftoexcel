@@ -40,7 +40,7 @@ export default async function StatementPage({ params }: { params: { id: string }
             {fmtDate(s.period_start)} → {fmtDate(s.period_end)} · {s.pages ?? "?"} pages · {s.row_count} rows
           </p>
         </div>
-        <Downloads xlsxPath={`exports/${s.storage_path.split("/")[0]}/${s.id}.xlsx`} pdfPath={s.storage_path} />
+        <Downloads xlsxPath={`exports/${s.storage_path.split("/")[0]}/${s.id}.xlsx`} pdfPath={s.storage_path} filename={s.original_filename} />
       </header>
 
       <section className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
