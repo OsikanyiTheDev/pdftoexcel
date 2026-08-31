@@ -80,13 +80,68 @@ def _auth(sb, authorization):
 
 @app.get("/")
 @app.get("/api/extract")
-async def health():
+async def health(id: int = 0, authorization: str = Header(None)):
+    if _IMPORT_ERRS:
+        return JSONResponse(status_code=500, content={
+            "ok": False, "service": "statement-intel extract",
+            "python": sys.version.split()[0],
+            "imports": "BROKEN (see detail)", "detail": _IMPORT_ERRS[0],
+            "env_present": {k: bool(os.environ.get(k)) for k in (
+                "SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL",
+                "SUPABASE_SERVICE_ROLE_KEY", "NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY")}})
+
+    # ---- on-demand Excel export: /api/extract?id=<statement_id> ----
+    if id > 0:
+        try:
+            from fastapi.responses import Response
+            sb = _sb()
+            user_id, org_id = _auth(sb, authorization)
+            srows = sb.select("statements", f"select=*&id=eq.{id}&org_id=eq.{org_id}&limit=1")
+            if not srows:
+                raise HTTPException(404, f"Statement {id} not found in your workspace")
+            s = srows[0]
+            tx = sb.select("transactions", f"select=*&statement_id=eq.{id}&order=row_index.asc")
+            fnum = lambda v: float(v) if v not in (None, "") else None
+            summary = {
+                "account_name": s.get("account_name") or "", "customer_address": "",
+                "account_number": s.get("account_number") or "", "account_type": "",
+                "currency": s.get("currency") or "GHS",
+                "statement_period_start": s.get("period_start") or "",
+                "statement_period_end": s.get("period_end") or "",
+                "opening_balance": fnum(s.get("opening_balance")),
+                "closing_balance": fnum(s.get("closing_balance")),
+                "available_balance": fnum(s.get("available_balance")),
+                "total_credit": fnum(s.get("total_credit")),
+                "total_debit": fnum(s.get("total_debit")),
+            }
+            payload = {"bank_name": s.get("bank_name") or "", "account_summary": summary,
+                       "transactions": [{
+                           "trans_date": t.get("trans_date") or "",
+                           "ref_number": t.get("ref_number") or "",
+                           "raw_details": t.get("raw_details") or "",
+                           "transaction_category": t.get("category") or "",
+                           "party_name": t.get("party") or "",
+                           "reference_id": t.get("reference_id") or "",
+                           "value_date": t.get("value_date") or t.get("trans_date") or "",
+                           "withdrawal_dr": float(t.get("withdrawal") or 0),
+                           "deposit_cr": float(t.get("deposit") or 0),
+                           "balance": float(t.get("balance") or 0)} for t in tx]}
+            data = build_xlsx(payload)
+            base_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", s.get("original_filename") or f"statement_{id}")
+            fname = re.sub(r"\.pdf$", "", base_name, flags=re.I) + ".xlsx"
+            return Response(content=data,
+                            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+        except HTTPException:
+            raise
+        except Exception:
+            return JSONResponse(status_code=500, content={
+                "detail": "Building the Excel file failed",
+                "error": traceback.format_exc(limit=6).splitlines()[-6:]})
+
     return {
-        "ok": not _IMPORT_ERRS,
-        "service": "statement-intel extract",
-        "python": sys.version.split()[0],
-        "imports": "OK" if not _IMPORT_ERRS else "BROKEN (see detail)",
-        "detail": _IMPORT_ERRS[0] if _IMPORT_ERRS else None,
+        "ok": True, "service": "statement-intel extract",
+        "python": sys.version.split()[0], "imports": "OK", "detail": None,
         "env_present": {k: bool(os.environ.get(k)) for k in (
             "SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL",
             "SUPABASE_SERVICE_ROLE_KEY", "NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY")},
